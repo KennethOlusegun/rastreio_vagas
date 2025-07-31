@@ -18,13 +18,24 @@ ADZUNA_APP_KEY = os.getenv("ADZUNA_APP_KEY")
 REMOTIVE_API = "https://remotive.io/api/remote-jobs"
 ADZUNA_API_BASE = "https://api.adzuna.com/v1/api/jobs"
 
+# === RECRIA credentials.json COM BASE NA ENV ===
+if os.getenv("GOOGLE_CREDENTIALS_JSON"):
+    with open("credentials.json", "w") as f:
+        f.write(os.getenv("GOOGLE_CREDENTIALS_JSON"))
+
 # === BUSCAS DEFINIDAS ===
-REGIOES_INTERESSE = ["brazil", "latam", "latin america", "south america", "central america", "north america"]
+REGIOES_INTERESSE = [
+    "brazil", "latam", "latin america", "south america",
+    "central america", "north america"
+]
 
 SEARCH_CONFIG = {
     "Frontend": ["Angular"],
     "Backend": ["NestJS", "Node.js", "Python"],
-    "Fullstack": ["Node Angular", "Python Angular", "Node.js Angular", "Python + Angular"],
+    "Fullstack": [
+        "Node Angular", "Python Angular",
+        "Node.js Angular", "Python + Angular"
+    ],
 }
 
 # === HELPERS ===
@@ -34,8 +45,8 @@ def send_telegram(msg):
             url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
             data = {"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "HTML"}
             requests.post(url, data=data)
-        except:
-            print("❌ Telegram falhou.")
+        except Exception as e:
+            print(f"❌ Falha no Telegram: {e}")
 
 def update_google_sheets(df):
     try:
@@ -43,13 +54,23 @@ def update_google_sheets(df):
         sheet = gc.open_by_url(GOOGLE_SHEETS_URL).sheet1
         sheet.clear()
         data = [df.columns.tolist()] + df.values.tolist()
-        sheet.update("A1", data)
+        sheet.update(range_name="A1", values=data)
         print("✅ Planilha atualizada.")
     except Exception as e:
-        print(f"❌ Falha Sheets: {e}")
+        print(f"❌ Falha ao atualizar Sheets: {e}")
 
 def is_vaga_interessante(location):
     return any(r in location.lower() for r in REGIOES_INTERESSE)
+
+def is_senioridade_interessante(texto):
+    texto = texto.lower()
+
+    palavras_excluidas = ["senior", "sênior", "sr", "especialista", "especialist", "expert", "lead"]
+    palavras_incluidas = ["estágio", "trainee", "junior", "júnior", "jr", "pleno", "mid"]
+
+    if any(p in texto for p in palavras_excluidas):
+        return False
+    return any(p in texto for p in palavras_incluidas)
 
 # === REMOTIVE ===
 def buscar_remotive(termo, tipo):
@@ -60,7 +81,8 @@ def buscar_remotive(termo, tipo):
         vagas = []
         for job in r.json().get("jobs", []):
             loc = job.get("candidate_required_location", "")
-            if is_vaga_interessante(loc):
+            texto = job.get("title", "") + " " + job.get("description", "")
+            if is_vaga_interessante(loc) and is_senioridade_interessante(texto):
                 vagas.append({
                     "Origem": "Remotive",
                     "Tipo": tipo,
@@ -72,14 +94,14 @@ def buscar_remotive(termo, tipo):
                 })
         return vagas
     except Exception as e:
-        print(f"Erro Remotive: {e}")
+        print(f"⚠️ Erro Remotive: {e}")
         return []
 
 # === ADZUNA ===
 def buscar_adzuna(termo, tipo):
     print(f"🌐 Adzuna: {tipo} - {termo}")
     resultados = []
-    countries = ["br", "us", "ca", "mx", "ar", "cl", "co", "pe", "uy"]  # América
+    countries = ["br", "us", "ca", "mx"]  # Países com suporte
 
     for country in countries:
         try:
@@ -97,18 +119,22 @@ def buscar_adzuna(termo, tipo):
 
             for job in data.get("results", []):
                 location = job.get("location", {}).get("display_name", "")
-                if "remote" in job.get("description", "").lower() or "remote" in location.lower():
+                descricao = job.get("description", "")
+                titulo = job.get("title", "")
+                texto = f"{titulo} {descricao}"
+
+                if ("remote" in descricao.lower() or "remote" in location.lower()) and is_senioridade_interessante(texto):
                     resultados.append({
                         "Origem": "Adzuna",
                         "Tipo": tipo,
-                        "Título": job.get("title", ""),
+                        "Título": titulo,
                         "Empresa": job.get("company", {}).get("display_name", "N/A"),
                         "Localidade": location,
                         "Data Publicação": job.get("created", "")[:10],
                         "Link": job.get("redirect_url", ""),
                     })
         except Exception as e:
-            print(f"Erro Adzuna ({country}): {e}")
+            print(f"⚠️ Erro Adzuna ({country}): {e}")
     return resultados
 
 # === EXECUÇÃO PRINCIPAL ===
